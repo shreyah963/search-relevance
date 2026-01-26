@@ -17,7 +17,8 @@ Inspired from [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Added better version of ESCI demo dataset that has images and overlaps with our ESCI judgment data.  More compelling demonstrations.  ([#354](https://github.com/opensearch-project/search-relevance/pull/354))
 - Add supports to parse custom UBI indexes  [#364](https://github.com/opensearch-project/search-relevance/pull/364)
 
-* Add `/experiments/_search` endpoint to allow searching for experiments using OpenSearch query DSL ([#369](https://github.com/opensearch-project/search-relevance/pull/369))
+- Add `/experiments/_search` endpoint to allow searching for experiments using OpenSearch query DSL ([#369](https://github.com/opensearch-project/search-relevance/pull/369))
+- Support for adding description in Search Configuration ([#370](https://github.com/opensearch-project/search-relevance/pull/370))
 
 ### Bug Fixes
 - Added `status` filter support to judgment listing API to prevent incomplete judgment groups from appearing in create experiment workflow ([#304](https://github.com/opensearch-project/search-relevance/pull/304))

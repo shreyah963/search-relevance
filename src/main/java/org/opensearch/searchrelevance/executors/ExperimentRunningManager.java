@@ -329,7 +329,8 @@ public class ExperimentRunningManager {
             (String) source.get("timestamp"),
             (String) source.get("index"),
             (String) source.get("query"),
-            (String) source.get("searchPipeline")
+            (String) source.get("searchPipeline"),
+            (String) source.get("description")
         );
     }
 
