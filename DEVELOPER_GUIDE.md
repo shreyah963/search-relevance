@@ -126,9 +126,13 @@ curl localhost:9200
 ```shell script
 ./gradlew run
 ```
-2. Run the script `src/test/scripts/demo.sh` to see the full process of creating new UBI indexes loaded with sample data as well as the "sample" ecommerce index.
+2. Change into the directory with the demo.sh script to make all file references work.
+```
+cd src/test/scripts
+```
+3. Run the script `demo.sh` to see the full process of creating new UBI indexes loaded with sample data as well as the "sample" ecommerce index.
 ```shell script
-src/test/scripts/demo.sh
+./demo.sh
 ```
 
 ### Run SRW in Hybrid Search Optimizer Demo Mode
@@ -136,9 +140,13 @@ src/test/scripts/demo.sh
 ```shell script
 ./gradlew run
 ```
-2. Run the script `src/test/scripts/demo_hybrid_optimizer.sh` to see the full process of setting up OpenSearch and indexing data with embeddings to run not only keyword but also hybrid search queries with the "sample" ecommerce index.
+2. Change into the directory with the demo.sh script to make all file references work.
+```
+cd src/test/scripts
+```
+3. Run the script `./demo_hybrid_optimizer.sh` to see the full process of setting up OpenSearch and indexing data with embeddings to run not only keyword but also hybrid search queries with the "sample" ecommerce index.
 ```shell script
-src/test/scripts/demo_hybrid_optimizer.sh
+./demo_hybrid_optimizer.sh
 ```
 
 ### Run remote clusters with search-relevance
