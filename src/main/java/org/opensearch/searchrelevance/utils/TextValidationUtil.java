@@ -15,6 +15,7 @@ import static org.opensearch.searchrelevance.common.MLConstants.PLACEHOLDER_SEAR
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 import org.opensearch.searchrelevance.model.QueryWithReference;
 
@@ -92,6 +93,142 @@ public class TextValidationUtil {
      */
     public static ValidationResult validateName(String name) {
         return validateText(name, MAX_NAME_LENGTH);
+    }
+
+    /**
+     * Result class for parsed optional string fields.
+     * Contains either a valid parsed value, a validation error, or indicates the
+     * field was absent.
+     */
+    public static class ParsedField {
+        private final String value;
+        private final String errorMessage;
+        private final boolean present;
+
+        private ParsedField(String value, String errorMessage, boolean present) {
+            this.value = value;
+            this.errorMessage = errorMessage;
+            this.present = present;
+        }
+
+        /**
+         * Creates a result for a successfully parsed and validated field.
+         */
+        public static ParsedField valid(String value) {
+            return new ParsedField(value, null, true);
+        }
+
+        /**
+         * Creates a result for a field that failed validation.
+         */
+        public static ParsedField invalid(String errorMessage) {
+            return new ParsedField(null, errorMessage, true);
+        }
+
+        /**
+         * Creates a result for a field that was not present or was blank.
+         */
+        public static ParsedField absent() {
+            return new ParsedField(null, null, false);
+        }
+
+        public String getValue() {
+            return value;
+        }
+
+        public String getErrorMessage() {
+            return errorMessage;
+        }
+
+        public boolean isPresent() {
+            return present;
+        }
+
+        public boolean isValid() {
+            return errorMessage == null;
+        }
+
+        public boolean hasError() {
+            return errorMessage != null;
+        }
+
+        /**
+         * Returns the value as an Optional, empty if absent or invalid.
+         */
+        public Optional<String> asOptional() {
+            return Optional.ofNullable(value);
+        }
+    }
+
+    /**
+     * Parses and validates an optional experiment name field from a request source
+     * map.
+     * Handles trimming, blank-to-null conversion, and validation.
+     *
+     * @param source    The source map from the request
+     * @param fieldName The name of the field to extract (e.g., "name")
+     * @return ParsedField containing the result
+     */
+    public static ParsedField parseOptionalExperimentName(Map<String, Object> source, String fieldName) {
+        if (source == null || fieldName == null) {
+            return ParsedField.absent();
+        }
+
+        Object rawValue = source.get(fieldName);
+        if (rawValue == null) {
+            return ParsedField.absent();
+        }
+
+        if (!(rawValue instanceof String)) {
+            return ParsedField.invalid("Field '" + fieldName + "' must be a string");
+        }
+
+        String value = ((String) rawValue).trim();
+        if (value.isEmpty()) {
+            return ParsedField.absent();
+        }
+
+        ValidationResult validation = validateName(value);
+        if (!validation.isValid()) {
+            return ParsedField.invalid(validation.getErrorMessage());
+        }
+
+        return ParsedField.valid(value);
+    }
+
+    /**
+     * Parses and validates an optional description field from a request source map.
+     * Handles trimming, blank-to-null conversion, and validation.
+     *
+     * @param source    The source map from the request
+     * @param fieldName The name of the field to extract (e.g., "description")
+     * @return ParsedField containing the result
+     */
+    public static ParsedField parseOptionalDescription(Map<String, Object> source, String fieldName) {
+        if (source == null || fieldName == null) {
+            return ParsedField.absent();
+        }
+
+        Object rawValue = source.get(fieldName);
+        if (rawValue == null) {
+            return ParsedField.absent();
+        }
+
+        if (!(rawValue instanceof String)) {
+            return ParsedField.invalid("Field '" + fieldName + "' must be a string");
+        }
+
+        String value = ((String) rawValue).trim();
+        if (value.isEmpty()) {
+            return ParsedField.absent();
+        }
+
+        ValidationResult validation = validateDescription(value);
+        if (!validation.isValid()) {
+            return ParsedField.invalid(validation.getErrorMessage());
+        }
+
+        return ParsedField.valid(value);
     }
 
     /**

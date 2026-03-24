@@ -7,6 +7,9 @@
  */
 package org.opensearch.searchrelevance.transport.scheduledJob;
 
+import static org.opensearch.searchrelevance.common.PluginConstants.DESCRIPTION;
+import static org.opensearch.searchrelevance.common.PluginConstants.NAME;
+
 import java.util.List;
 import java.util.Map;
 
@@ -108,6 +111,8 @@ public class DeleteScheduledExperimentTransportAction extends HandledTransportAc
         return new Experiment(
             (String) sourceMap.get("id"),
             TimeUtils.getTimestamp(),
+            (String) sourceMap.get(NAME),
+            (String) sourceMap.get(DESCRIPTION),
             ExperimentType.valueOf((String) sourceMap.get("type")),
             AsyncStatus.valueOf((String) sourceMap.get("status")),
             (String) sourceMap.get("querySetId"),

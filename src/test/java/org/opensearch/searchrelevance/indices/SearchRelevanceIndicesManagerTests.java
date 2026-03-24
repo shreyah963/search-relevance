@@ -825,4 +825,62 @@ public class SearchRelevanceIndicesManagerTests extends OpenSearchTestCase {
         assertNull(stepListener.result());
     }
 
+    // ==================== patchDoc Tests ====================
+
+    public void testPatchDocWhenSucceeded() {
+        String docId = "test_id";
+        Map<String, Object> updates = Map.of("name", "New Name", "description", "New Description");
+
+        doAnswer(invocation -> {
+            ActionListener<org.opensearch.action.update.UpdateResponse> listener = invocation.getArgument(1);
+            org.opensearch.action.update.UpdateResponse updateResponse = mock(org.opensearch.action.update.UpdateResponse.class);
+            when(updateResponse.getId()).thenReturn(docId);
+            listener.onResponse(updateResponse);
+            return null;
+        }).when(client).update(any(org.opensearch.action.update.UpdateRequest.class), any(ActionListener.class));
+
+        @SuppressWarnings("unchecked")
+        ActionListener<org.opensearch.action.update.UpdateResponse> listener = mock(ActionListener.class);
+        indicesManager.patchDoc(docId, updates, QUERY_SET, listener);
+
+        verify(client).update(any(org.opensearch.action.update.UpdateRequest.class), any(ActionListener.class));
+    }
+
+    public void testPatchDocWithNullDocId() {
+        Map<String, Object> updates = Map.of("name", "New Name");
+
+        @SuppressWarnings("unchecked")
+        ActionListener<org.opensearch.action.update.UpdateResponse> listener = mock(ActionListener.class);
+        indicesManager.patchDoc(null, updates, QUERY_SET, listener);
+
+        ArgumentCaptor<Exception> exceptionCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(listener).onFailure(exceptionCaptor.capture());
+        assertTrue(exceptionCaptor.getValue() instanceof SearchRelevanceException);
+        assertTrue(exceptionCaptor.getValue().getMessage().contains("Document ID cannot be null"));
+    }
+
+    public void testPatchDocWithEmptyUpdates() {
+        @SuppressWarnings("unchecked")
+        ActionListener<org.opensearch.action.update.UpdateResponse> listener = mock(ActionListener.class);
+        indicesManager.patchDoc("test_id", Map.of(), QUERY_SET, listener);
+
+        ArgumentCaptor<Exception> exceptionCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(listener).onFailure(exceptionCaptor.capture());
+        assertTrue(exceptionCaptor.getValue() instanceof SearchRelevanceException);
+        assertTrue(exceptionCaptor.getValue().getMessage().contains("Updates map cannot be null"));
+    }
+
+    public void testPatchDocWithNullIndex() {
+        Map<String, Object> updates = Map.of("name", "New Name");
+
+        @SuppressWarnings("unchecked")
+        ActionListener<org.opensearch.action.update.UpdateResponse> listener = mock(ActionListener.class);
+        indicesManager.patchDoc("test_id", updates, null, listener);
+
+        ArgumentCaptor<Exception> exceptionCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(listener).onFailure(exceptionCaptor.capture());
+        assertTrue(exceptionCaptor.getValue() instanceof SearchRelevanceException);
+        assertTrue(exceptionCaptor.getValue().getMessage().contains("Index cannot be null"));
+    }
+
 }

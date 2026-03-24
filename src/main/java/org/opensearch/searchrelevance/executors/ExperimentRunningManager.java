@@ -48,13 +48,13 @@ import org.opensearch.searchrelevance.scheduler.ExperimentCancellationToken;
 import org.opensearch.searchrelevance.scheduler.ScheduledExperimentRunnerManager;
 import org.opensearch.searchrelevance.settings.SearchRelevanceSettingsAccessor;
 import org.opensearch.searchrelevance.transport.experiment.PutExperimentRequest;
-import org.opensearch.searchrelevance.transport.experiment.PutExperimentTransportAction;
 import org.opensearch.searchrelevance.utils.TimeUtils;
 import org.opensearch.threadpool.ThreadPool;
 
 import com.google.common.annotations.VisibleForTesting;
 
 import lombok.AllArgsConstructor;
+import lombok.Getter;
 import lombok.extern.log4j.Log4j2;
 
 /**
@@ -62,7 +62,7 @@ import lombok.extern.log4j.Log4j2;
  * in PutExperimentTransportAction and ScheduledExperimentRunnerManager. There are
  * 2 paths where the code will use {@link ExperimentRunningManager}: The experiment
  * was scheduled to run, or the user manually triggered through
- * {@link PutExperimentTransportAction}.
+ * {@link org.opensearch.searchrelevance.transport.experiment.PutExperimentTransportAction}.
  *
  * <p>
  * When running an experiment, we need a {@link QuerySet} and a
@@ -108,15 +108,19 @@ public class ExperimentRunningManager {
     public void startExperimentRun(
         String experimentId,
         PutExperimentRequest request,
+        String experimentName,
+        String experimentDescription,
         ExperimentCancellationToken cancellationToken,
         CountDownLatch actuallyFinished
     ) {
+        // Create context to carry resolved name and description through async callbacks
+        final ExperimentContext context = new ExperimentContext(experimentId, request, experimentName, experimentDescription);
+
         List<Future<?>> futures = new ArrayList<>();
         if (request.getScheduledExperimentResultId() != null) {
             if (runningFutures.containsKey(request.getScheduledExperimentResultId())) {
                 handleAsyncFailure(
-                    experimentId,
-                    request,
+                    context,
                     "There is a running scheduled run with the same scheduled experiment id",
                     new Exception("Cannot run experiment!"),
                     actuallyFinished
@@ -148,34 +152,35 @@ public class ExperimentRunningManager {
                 // Check if queryTexts is empty and complete experiment immediately
                 if (queryTextWithReferences.isEmpty()) {
                     log.info("Experiment {} completed with 0 query texts", experimentId);
-                    updateFinalExperiment(experimentId, request, new ArrayList<>(), request.getJudgmentList(), actuallyFinished);
+                    updateFinalExperiment(context, new ArrayList<>(), request.getJudgmentList(), actuallyFinished);
                     return;
                 }
 
                 // Then get SearchConfigurations asynchronously (this will also start the experiment)
-                fetchSearchConfigurationsAsync(experimentId, request, queryTextWithReferences, cancellationToken, actuallyFinished);
+                fetchSearchConfigurationsAsync(context, queryTextWithReferences, cancellationToken, actuallyFinished);
             } catch (Exception e) {
-                handleAsyncFailure(experimentId, request, "Failed to process QuerySet", e, actuallyFinished);
+                handleAsyncFailure(context, "Failed to process QuerySet", e, actuallyFinished);
             }
-        }, e -> { handleAsyncFailure(experimentId, request, "Failed to fetch QuerySet", e, actuallyFinished); }));
+        }, e -> { handleAsyncFailure(context, "Failed to fetch QuerySet", e, actuallyFinished); }));
     }
 
     @VisibleForTesting
     void fetchSearchConfigurationsAsync(
-        String experimentId,
-        PutExperimentRequest request,
+        ExperimentContext context,
         List<String> queryTextWithReferences,
         ExperimentCancellationToken cancellationToken,
         CountDownLatch actuallyFinished
     ) {
+        String experimentId = context.getExperimentId();
+        PutExperimentRequest request = context.getRequest();
+
         Map<String, SearchConfigurationDetails> searchConfigurations = new HashMap<>();
         AtomicBoolean hasFailure = new AtomicBoolean(false);
         List<CompletableFuture<Entry<String, Object>>> configFutures = new ArrayList<>();
 
         for (String configId : request.getSearchConfigurationList()) {
             CompletableFuture<Entry<String, Object>> singleSearchConfigurationFuture = fetchSingleSearchConfigurationAsync(
-                experimentId,
-                request,
+                context,
                 queryTextWithReferences,
                 hasFailure,
                 configId,
@@ -204,10 +209,10 @@ public class ExperimentRunningManager {
                 // The config future will be waited on, but there is a chance the future might be null.
                 configEntry = configFuture.get();
             } catch (InterruptedException e) {
-                handleFailure(e, hasFailure, experimentId, request, actuallyFinished);
+                handleFailure(e, hasFailure, context, actuallyFinished);
                 return;
             } catch (ExecutionException e) {
-                handleFailure(e, hasFailure, experimentId, request, actuallyFinished);
+                handleFailure(e, hasFailure, context, actuallyFinished);
                 return;
             }
             searchConfigurations.put(configEntry.getKey(), (SearchConfigurationDetails) configEntry.getValue());
@@ -221,8 +226,7 @@ public class ExperimentRunningManager {
         AtomicInteger pendingQueries = new AtomicInteger(queryTextWithReferences.size());
 
         executeExperimentEvaluation(
-            experimentId,
-            request,
+            context,
             searchConfigurations,
             queryTextWithReferences,
             finalResults,
@@ -242,14 +246,14 @@ public class ExperimentRunningManager {
     }
 
     private CompletableFuture<Entry<String, Object>> fetchSingleSearchConfigurationAsync(
-        String experimentId,
-        PutExperimentRequest request,
+        ExperimentContext context,
         List<String> queryTextWithReferences,
         AtomicBoolean hasFailure,
         String configId,
         ExperimentCancellationToken cancellationToken,
         CountDownLatch actuallyFinished
     ) {
+        String experimentId = context.getExperimentId();
         CompletableFuture<Entry<String, Object>> future = new CompletableFuture<>();
         searchConfigurationDao.getSearchConfiguration(configId, ActionListener.wrap(searchConfigResponse -> {
             try {
@@ -274,13 +278,13 @@ public class ExperimentRunningManager {
             } catch (Exception e) {
                 future.completeExceptionally(e);
                 if (hasFailure.compareAndSet(false, true)) {
-                    handleAsyncFailure(experimentId, request, "Failed to process SearchConfiguration", e, actuallyFinished);
+                    handleAsyncFailure(context, "Failed to process SearchConfiguration", e, actuallyFinished);
                 }
             }
         }, e -> {
             future.completeExceptionally(e);
             if (hasFailure.compareAndSet(false, true)) {
-                handleAsyncFailure(experimentId, request, "Failed to fetch SearchConfiguration: " + configId, e, actuallyFinished);
+                handleAsyncFailure(context, "Failed to fetch SearchConfiguration: " + configId, e, actuallyFinished);
             }
         }));
         return future;
@@ -334,49 +338,9 @@ public class ExperimentRunningManager {
         );
     }
 
-    private void calculateMetricsAsync(
-        String experimentId,
-        PutExperimentRequest request,
-        Map<String, SearchConfigurationDetails> searchConfigurations,
-        List<String> queryTextWithReferences
-    ) {
-        if (queryTextWithReferences == null || searchConfigurations == null) {
-            throw new IllegalStateException("Missing required data for metrics calculation");
-        }
-
-        processQueryTextMetrics(experimentId, request, searchConfigurations, queryTextWithReferences);
-    }
-
-    private void processQueryTextMetrics(
-        String experimentId,
-        PutExperimentRequest request,
-        Map<String, SearchConfigurationDetails> searchConfigurations,
-        List<String> queryTexts
-    ) {
-        // TODO: finalResults can incur a lot of memory, so we need to make sure to monitor and log
-        // if/when it goes over thresholds. https://github.com/opensearch-project/search-relevance/issues/283
-        List<Map<String, Object>> finalResults = Collections.synchronizedList(new ArrayList<>());
-        AtomicInteger pendingQueries = new AtomicInteger(queryTexts.size());
-        AtomicBoolean hasFailure = new AtomicBoolean(false);
-
-        executeExperimentEvaluation(
-            experimentId,
-            request,
-            searchConfigurations,
-            queryTexts,
-            finalResults,
-            pendingQueries,
-            hasFailure,
-            request.getJudgmentList(),
-            null,
-            null
-        );
-    }
-
     @VisibleForTesting
     void executeExperimentEvaluation(
-        String experimentId,
-        PutExperimentRequest request,
+        ExperimentContext context,
         Map<String, SearchConfigurationDetails> searchConfigurations,
         List<String> queryTexts,
         List<Map<String, Object>> finalResults,
@@ -386,6 +350,9 @@ public class ExperimentRunningManager {
         ExperimentCancellationToken cancellationToken,
         CountDownLatch actuallyFinished
     ) {
+        String experimentId = context.getExperimentId();
+        PutExperimentRequest request = context.getRequest();
+
         int completedQueries = 0;
         int totalQueries = queryTexts.size();
         for (String queryText : queryTexts) {
@@ -399,7 +366,7 @@ public class ExperimentRunningManager {
                     completedQueries,
                     totalQueries
                 );
-                handleFailure(new Exception("Experiment cancelled"), hasFailure, experimentId, request, actuallyFinished);
+                handleFailure(new Exception("Experiment cancelled"), hasFailure, context, actuallyFinished);
                 return;
             }
 
@@ -414,14 +381,13 @@ public class ExperimentRunningManager {
                             queryResults,
                             finalResults,
                             pendingQueries,
-                            experimentId,
-                            request,
+                            context,
                             hasFailure,
                             judgmentList,
                             cancellationToken,
                             actuallyFinished
                         ),
-                        error -> handleFailure(error, hasFailure, experimentId, request, actuallyFinished)
+                        error -> handleFailure(error, hasFailure, context, actuallyFinished)
                     )
                 );
             } else if (request.getType() == ExperimentType.HYBRID_OPTIMIZER) {
@@ -441,14 +407,13 @@ public class ExperimentRunningManager {
                             queryResults,
                             finalResults,
                             pendingQueries,
-                            experimentId,
-                            request,
+                            context,
                             hasFailure,
                             judgmentList,
                             cancellationToken,
                             actuallyFinished
                         ),
-                        error -> handleFailure(error, hasFailure, experimentId, request, actuallyFinished)
+                        error -> handleFailure(error, hasFailure, context, actuallyFinished)
                     )
                 );
             } else if (request.getType() == ExperimentType.POINTWISE_EVALUATION) {
@@ -467,14 +432,13 @@ public class ExperimentRunningManager {
                             queryResults,
                             finalResults,
                             pendingQueries,
-                            experimentId,
-                            request,
+                            context,
                             hasFailure,
                             judgmentList,
                             cancellationToken,
                             actuallyFinished
                         ),
-                        error -> handleFailure(error, hasFailure, experimentId, request, actuallyFinished)
+                        error -> handleFailure(error, hasFailure, context, actuallyFinished)
                     )
                 );
             } else {
@@ -489,19 +453,21 @@ public class ExperimentRunningManager {
         Map<String, Object> queryResults,
         List<Map<String, Object>> finalResults,
         AtomicInteger pendingQueries,
-        String experimentId,
-        PutExperimentRequest request,
+        ExperimentContext context,
         AtomicBoolean hasFailure,
         List<String> judgmentList,
         ExperimentCancellationToken cancellationToken,
         CountDownLatch actuallyFinished
     ) {
+        String experimentId = context.getExperimentId();
+        PutExperimentRequest request = context.getRequest();
+
         if (hasFailure.get() || checkIfCancelled(cancellationToken)) {
             log.info(
                 "Experiment with underlying id {} has been timed out or failed before handling query results, therefore we should not update results",
                 experimentId
             );
-            handleFailure(null, hasFailure, experimentId, request, actuallyFinished);
+            handleFailure(null, hasFailure, context, actuallyFinished);
             return;
         }
 
@@ -534,33 +500,34 @@ public class ExperimentRunningManager {
                 }
 
                 if (pendingQueries.decrementAndGet() == 0) {
-                    updateFinalExperiment(experimentId, request, finalResults, judgmentList, actuallyFinished);
+                    updateFinalExperiment(context, finalResults, judgmentList, actuallyFinished);
                 }
             }
         } catch (Exception e) {
-            handleFailure(e, hasFailure, experimentId, request, actuallyFinished);
+            handleFailure(e, hasFailure, context, actuallyFinished);
         }
     }
 
     private void handleFailure(
-        Exception error,
-        AtomicBoolean hasFailure,
-        String experimentId,
-        PutExperimentRequest request,
-        CountDownLatch actuallyFinished
+            Exception error,
+            AtomicBoolean hasFailure,
+            ExperimentContext context,
+            CountDownLatch actuallyFinished
     ) {
         if (hasFailure.compareAndSet(false, true)) {
-            handleAsyncFailure(experimentId, request, "Failed to process metrics", error, actuallyFinished);
+            handleAsyncFailure(context, "Failed to process metrics", error, actuallyFinished);
         }
     }
 
     private void updateFinalExperiment(
-        String experimentId,
-        PutExperimentRequest request,
+        ExperimentContext context,
         List<Map<String, Object>> finalResults,
         List<String> judgmentList,
         CountDownLatch actuallyFinished
     ) {
+        String experimentId = context.getExperimentId();
+        PutExperimentRequest request = context.getRequest();
+
         if (request.getScheduledExperimentResultId() != null) {
             ScheduledExperimentResult finalExperiment = new ScheduledExperimentResult(
                 request.getScheduledExperimentResultId(),
@@ -574,7 +541,7 @@ public class ExperimentRunningManager {
                 finalExperiment,
                 ActionListener.wrap(
                     response -> log.debug("Updated completed scheduled experiment: {}", experimentId),
-                    error -> handleAsyncFailure(experimentId, request, "Failed to update final experiment", error, actuallyFinished)
+                    error -> handleAsyncFailure(context, "Failed to update final experiment", error, actuallyFinished)
                 )
             );
             actuallyFinished.countDown();
@@ -583,6 +550,8 @@ public class ExperimentRunningManager {
         Experiment finalExperiment = new Experiment(
             experimentId,
             TimeUtils.getTimestamp(),
+            context.getName(),
+            context.getDescription(),
             request.getType(),
             AsyncStatus.COMPLETED,
             request.getQuerySetId(),
@@ -596,19 +565,21 @@ public class ExperimentRunningManager {
             finalExperiment,
             ActionListener.wrap(
                 response -> log.debug("Updated final experiment: {}", experimentId),
-                error -> handleAsyncFailure(experimentId, request, "Failed to update final experiment", error, actuallyFinished)
+                error -> handleAsyncFailure(context, "Failed to update final experiment", error, actuallyFinished)
             )
         );
     }
 
     private void handleAsyncFailure(
-        String experimentId,
-        PutExperimentRequest request,
-        String message,
-        Exception error,
-        CountDownLatch actuallyFinished
+            ExperimentContext context,
+            String message,
+            Exception error,
+            CountDownLatch actuallyFinished
     ) {
-        log.error(message + " for scheduled experiment: " + experimentId, error);
+        String experimentId = context.getExperimentId();
+        PutExperimentRequest request = context.getRequest();
+
+        log.error("{} for experiment: {}", message, experimentId, error);
         if (request.getScheduledExperimentResultId() != null) {
             ScheduledExperimentResult finalExperiment = new ScheduledExperimentResult(
                 request.getScheduledExperimentResultId(),
@@ -629,18 +600,18 @@ public class ExperimentRunningManager {
             return;
         }
 
-        log.error(message + " for experiment: " + experimentId, error);
-
         Experiment errorExperiment = new Experiment(
             experimentId,
             TimeUtils.getTimestamp(),
+            context.getName(),
+            context.getDescription(),
             request.getType(),
             AsyncStatus.ERROR,
             request.getQuerySetId(),
             request.getSearchConfigurationList(),
             request.getJudgmentList(),
             request.getSize(),
-            List.of(Map.of("error", error.getMessage()))
+            List.of(Map.of("error", error != null && error.getMessage() != null ? error.getMessage() : "Unknown error"))
         );
 
         experimentDao.updateExperiment(
@@ -650,5 +621,20 @@ public class ExperimentRunningManager {
                 e -> log.error("Failed to update error status for experiment: " + experimentId, e)
             )
         );
+    }
+
+    /**
+     * Internal context class to carry experiment metadata through async processing
+     * chains.
+     * This ensures that the resolved name and description are preserved through all
+     * async callbacks.
+     */
+    @Getter
+    @AllArgsConstructor
+    static class ExperimentContext {
+        private final String experimentId;
+        private final PutExperimentRequest request;
+        private final String name;
+        private final String description;
     }
 }
